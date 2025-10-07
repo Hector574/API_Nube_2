@@ -1,77 +1,88 @@
-from flask import Flask, jsonify, request
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 import random
-import json
+from datetime import datetime
 
+# Inicialización de la aplicación Flask
 app = Flask(__name__)
+# Habilitar CORS para permitir solicitudes desde AppSheet o cualquier otro origen
+CORS(app) 
 
-# --- CONFIGURACIÓN GLOBAL ---
-# Rangos por defecto para asegurar robustez si AppSheet envía algo inválido.
-DEFAULT_LOWER = 1
-DEFAULT_UPPER = 10000 
-
-# --- FUNCIÓN DE UTILIDAD: LECTURA ROBUSTA DE DATOS ---
-def get_request_data():
+@app.route('/process', methods=['POST'])
+def process_data():
     """
-    Intenta leer los parámetros ('lower', 'upper') desde 
-    la URL (Query Params) o desde el Cuerpo (Body) de la solicitud.
+    Recibe los límites y la cantidad, genera N números aleatorios y
+    devuelve el resultado, la fecha de generación y el código de estado.
     """
-    data = {}
-    
-    # 1. Leer desde Query Params (método AppSheet robusto: GET en URL)
-    for key in ['lower', 'upper']:
-        if key in request.args:
-            data[key] = request.args.get(key)
-
-    # 2. Leer desde Body (método POST: solo si no se encontraron params en la URL)
-    if not data and request.method == 'POST':
-        try:
-            if request.is_json:
-                data = request.get_json()
-            elif request.data:
-                data = json.loads(request.data)
-        except Exception:
-            pass
-            
-    return data
-
-# --- ENDPOINT ÚNICO: GENERAR UN SOLO NÚMERO ---
-# Usamos el endpoint correcto y aceptamos POST o GET.
-@app.route('/generate_single_number', methods=['POST', 'GET'])
-def generate_single_number():
-    """
-    Genera un solo número aleatorio entre los límites proporcionados.
-    La respuesta es un objeto JSON simple: {"number": 1234}
-    """
-    data = get_request_data()
-    
-    # Extraer y asignar valores.
-    # CRÍTICO: Python recibe los límites como cadenas de texto (str) desde AppSheet
-    lower_limit_str = data.get('lower', DEFAULT_LOWER) 
-    upper_limit_str = data.get('upper', DEFAULT_UPPER)
-
     try:
-        # Conversión segura a entero
-        lower_limit = int(lower_limit_str)
-        upper_limit = int(upper_limit_str)
+        # 1. Obtener los datos JSON de la solicitud POST
+        data = request.get_json(force=True)
         
-        # Validación y ajuste de límites
-        if lower_limit > upper_limit:
-            lower_limit, upper_limit = DEFAULT_LOWER, DEFAULT_UPPER
+        # 2. Extraer y convertir los datos de entrada
+        # Se asume que AppSheet envía los valores como strings (Tipo TEXTO)
+        limite_inf_str = data.get('LimiteInferior')
+        limite_sup_str = data.get('LimiteSuperior')
+        cantidad_str = data.get('Cantidad')
+
+        # Si falta algún dato, devuelve un error 400
+        if not limite_inf_str or not limite_sup_str or not cantidad_str:
+            return jsonify({
+                "Resultado": "ERROR: Faltan datos de entrada (Limite, Cantidad)",
+                "FechaGeneracion": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "CODIGO_STATUS": 400
+            }), 400 # Error del cliente (Bad Request)
+
+        # 3. Conversión de Tipos (Intentar convertir a entero)
+        limite_inf = int(limite_inf_str)
+        limite_sup = int(limite_sup_str)
+        cantidad = int(cantidad_str)
+
+        # 4. Validación de Límites
+        if limite_inf >= limite_sup:
+            return jsonify({
+                "Resultado": "ERROR: El Límite Inferior debe ser menor que el Límite Superior.",
+                "FechaGeneracion": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "CODIGO_STATUS": 400
+            }), 400
         
-        # Generación del número
-        random_number = random.randint(lower_limit, upper_limit)
+        if cantidad <= 0:
+            return jsonify({
+                "Resultado": "ERROR: La Cantidad debe ser mayor que cero.",
+                "FechaGeneracion": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "CODIGO_STATUS": 400
+            }), 400
+
+        # 5. Generación de números aleatorios
+        numeros_aleatorios = [
+            str(random.randint(limite_inf, limite_sup)) 
+            for _ in range(cantidad)
+        ]
         
-        # Devolvemos el resultado en formato JSON
-        return jsonify({"number": random_number})
+        # Unir la lista en una sola cadena separada por comas
+        resultado_final = ", ".join(numeros_aleatorios)
+
+        # 6. Devolver la respuesta JSON de éxito (CODIGO_STATUS 200)
+        return jsonify({
+            "Resultado": resultado_final, # Clave que coincide con la columna de AppSheet
+            "FechaGeneracion": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "CODIGO_STATUS": 200 
+        }), 200
 
     except ValueError:
-        # Manejo de error si los límites no son numéricos
-        random_number = random.randint(DEFAULT_LOWER, DEFAULT_UPPER)
-        return jsonify({"number": random_number})
-        
+        # Captura el error si la conversión a int falla (si AppSheet no envía strings)
+        return jsonify({
+            "Resultado": "ERROR: Los límites o cantidad no son números válidos. Revise el tipo de dato en AppSheet.",
+            "FechaGeneracion": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "CODIGO_STATUS": 400
+        }), 400
     except Exception as e:
-        # Manejo de cualquier otro error inesperado
-        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+        # Captura cualquier otro error del servidor
+        return jsonify({
+            "Resultado": f"ERROR INTERNO: {str(e)}",
+            "FechaGeneracion": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "CODIGO_STATUS": 500
+        }), 500
 
 if __name__ == '__main__':
+    # Usar puerto para despliegue local o para Render (aunque Render usa Gunicorn)
     app.run(host='0.0.0.0', port=5000)
