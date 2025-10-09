@@ -1,72 +1,68 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+import json
 import random
 from datetime import datetime
+from flask import Flask, request, jsonify
 
-# Inicialización de la aplicación Flask
 app = Flask(__name__)
-# Habilitar CORS para permitir solicitudes desde AppSheet o cualquier otro origen
-CORS(app)
 
-@app.route('/process', methods=['POST'])
-def process_data():
-    """
-    Recibe los límites y la cantidad, genera N números aleatorios y
-    devuelve el resultado, la fecha de generación y el código de estado.
-    """
+# Función para generar números aleatorios
+def generar_numeros_aleatorios(inferior, superior, cantidad):
+    if inferior >= superior or cantidad <= 0:
+        # Devuelve None si los parámetros son inválidos
+        return None 
+    
+    numeros = random.sample(range(inferior, superior + 1), min(cantidad, superior - inferior + 1))
+    return ",".join(map(str, numeros))
+
+@app.route('/generar_numeros', methods=['POST'])
+def generar_numeros():
     try:
-        # 1. Obtener los datos JSON de la solicitud POST
-        data = request.get_json(force=True)
+        data = request.get_json()
         
-        # 2. Extraer y convertir los datos de entrada
-        # Se asume que AppSheet envia los valores como strings (Tipo TEXTO)
-        limite_inf_str = data.get('LimiteInferior')
-        limite_sup_str = data.get('LimiteSuperior')
-        cantidad_str = data.get('Cantidad')
-
-        # Si falta algún dato, devuelve un error 400
-        if not limite_inf_str or not limite_sup_str or not cantidad_str:
-            return jsonify({
-                "NúmerosGenerados": "",
-                "FechaGeneracion": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "CODIGO_STATUS": "400",
-                "MENSAJE_ERROR": "Error: Faltan uno o más parámetros de entrada (LimiteInferior, LimiteSuperior o Cantidad)."
-            }), 400
-
+        # Validar y convertir datos (AppSheet envía los números como texto)
         try:
-            limite_inf = int(limite_inf_str)
-            limite_sup = int(limite_sup_str)
-            cantidad = int(cantidad_str)
-        except ValueError:
-             return jsonify({
-                "NúmerosGenerados": "",
-                "FechaGeneracion": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "CODIGO_STATUS": "400",
-                "MENSAJE_ERROR": "Error: Los parámetros de entrada deben ser números enteros."
-            }), 400
+            limite_inferior = int(data.get('LimiteInferior'))
+            limite_superior = int(data.get('LimiteSuperior'))
+            cantidad = int(data.get('Cantidad'))
+        except (ValueError, TypeError):
+            # Error de datos inválidos
+            response = {
+                "resultado": "",
+                "fechageneracion": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "codigo_status": "400",
+                "mensaje_error": "Error: Los límites o la cantidad no son números válidos."
+            }
+            return jsonify(response), 400
 
-        # 3. Lógica de negocio: Generar N números aleatorios
-        numeros = [str(random.randint(limite_inf, limite_sup)) for _ in range(cantidad)]
-        resultado_str = ",".join(numeros)
+        # Generar números
+        resultado_str = generar_numeros_aleatorios(limite_inferior, limite_superior, cantidad)
 
-        # 4. Preparar la respuesta de éxito
+        if resultado_str is None:
+             response = {
+                "resultado": "",
+                "fechageneracion": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "codigo_status": "400",
+                "mensaje_error": "Error: Rango inválido o cantidad excede el rango."
+            }
+             return jsonify(response), 400
+        
+        # Respuesta exitosa con claves en minúsculas
         response = {
-            "NúmerosGenerados": resultado_str,  # ¡Clave cambiada a NúmerosGenerados!
-            "FechaGeneracion": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "CODIGO_STATUS": "200",
-            "MENSAJE_ERROR": "Transacción completada exitosamente."
+            "resultado": resultado_str,
+            "fechageneracion": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "codigo_status": "200",
+            "mensaje_error": "transaccion completada exitosamente."
         }
         
         return jsonify(response), 200
 
     except Exception as e:
-        # Manejo de cualquier otro error del servidor
-        return jsonify({
-            "NúmerosGenerados": "",
-            "FechaGeneracion": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "CODIGO_STATUS": "500",
-            "MENSAJE_ERROR": f"Error interno del servidor: {str(e)}"
-        }), 500
-
-if __name__ == '__main__':
-    app.run(debug=True)
+        # Error interno del servidor
+        print(f"Error: {e}")
+        response = {
+            "resultado": "",
+            "fechageneracion": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "codigo_status": "500",
+            "mensaje_error": f"Error interno del servidor: {str(e)}"
+        }
+        return jsonify(response), 500
